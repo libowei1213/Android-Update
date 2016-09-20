@@ -19,4 +19,6 @@ public class Constants {
     public static final int MSG_DOWNLOADING = 0x005;
     public static final int MSG_OPEN_APK = 0x006;
 
+    public static final int MSG_PROGRESS_CANCEL = 0x007;
+
 }

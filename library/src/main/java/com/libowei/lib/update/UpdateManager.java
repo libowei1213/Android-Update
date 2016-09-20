@@ -1,30 +1,27 @@
 package com.libowei.lib.update;
 
+import android.app.AlertDialog;
+import android.app.ProgressDialog;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Message;
 import android.util.Log;
-import android.view.View;
 
-import com.loopj.android.http.*;
+
+import org.apache.commons.io.IOUtils;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.MalformedURLException;
+import java.net.HttpURLConnection;
 import java.net.URL;
-import java.net.URLClassLoader;
-import java.net.URLConnection;
 import java.util.Timer;
 import java.util.TimerTask;
-
-import cz.msebera.android.httpclient.Header;
-import me.drakeet.materialdialog.MaterialDialog;
 
 /**
  * Created by libowei on 2016-09-13.
@@ -38,8 +35,8 @@ public class UpdateManager {
 
 
     UpdateInfo updateInfo;
-    MaterialDialog downloadDialog;
     DownUtil downUtil;
+    ProgressDialog progressDialog;
 
     /**
      * 构造函数
@@ -52,110 +49,107 @@ public class UpdateManager {
     }
 
 
-    public void check(String url) {
+    /**
+     * 检查更新
+     *
+     * @param url
+     */
+    public void check(final String url) {
 
-        AsyncHttpClient client = new AsyncHttpClient();
-        client.get(url, new AsyncHttpResponseHandler() {
-
+        new Thread() {
             @Override
-            public void onStart() {
-                // called before request is started
-            }
+            public void run() {
 
-            @Override
-            public void onSuccess(int statusCode, Header[] headers, byte[] response) {
-                // called when response HTTP status is "200 OK"
-                String json = new String(response);
+                try {
+                    HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+                    conn.setConnectTimeout(5 * 1000);
+                    conn.connect();
+                    //连接成功
+                    if (conn.getResponseCode() == HttpURLConnection.HTTP_OK) {
 
-                Log.i("UPDATE", json);
+                        String response = IOUtils.toString(conn.getInputStream());
+                        updateInfo = parse(response);
+                        if (updateInfo == null) {
+                            handler.sendEmptyMessage(Constants.MSG_PARSE_ERROR);
+                            return;
+                        }
+                        //判断版本号
+                        String currentVersionName = getVersionName();
 
-                updateInfo = JsonParser.parse(json);
-                if (updateInfo == null) {
-                    handler.sendEmptyMessage(Constants.MSG_PARSE_ERROR);
-                    return;
-                }
-                //判断版本号
-                if (getVersionName().equals(updateInfo.getVersionName())) {
-                    //版本号一致->没有更新
-                    handler.sendEmptyMessage(Constants.MSG_NO_UPDATE);
-                } else {
-                    //版本号不一致->有更新
-                    if (updateInfo.getDownloadUrl() == null || "".equals(updateInfo.getDownloadUrl())) {
-                        //没有下载url
-                        handler.sendEmptyMessage(Constants.MSG_PARSE_ERROR);
-                        return;
+                        if (currentVersionName != null) {
+                            if (currentVersionName.equals(updateInfo.getVersionName())) {
+                                //版本号一致->没有更新
+                                handler.sendEmptyMessage(Constants.MSG_NO_UPDATE);
+                            } else {
+                                //版本号不一致->有更新
+                                if (updateInfo.getDownloadUrl() == null || "".equals(updateInfo.getDownloadUrl())) {
+                                    //没有下载url
+                                    handler.sendEmptyMessage(Constants.MSG_PARSE_ERROR);
+                                    return;
+                                }
+                                //有更新, 发送Message
+                                handler.sendEmptyMessage(Constants.MSG_NEW_UPDATE);
+                            }
+                        }
                     }
 
-                    //有更新, 发送Message
-                    handler.sendEmptyMessage(Constants.MSG_NEW_UPDATE);
-
+                } catch (IOException e) {
+                    e.printStackTrace();
                 }
 
             }
-
-            @Override
-            public void onFailure(int statusCode, Header[] headers, byte[] errorResponse, Throwable e) {
-                // called when response HTTP status is "4XX" (eg. 401, 403, 404)
-                //传递网络错误Message
-                handler.sendEmptyMessage(Constants.MSG_NETWORK_ERROR);
-            }
-
-            @Override
-            public void onRetry(int retryNo) {
-                // called when request is retried
-            }
-        });
+        }.start();
     }
 
 
     /**
-     * 获取当前版本名称
-     *
-     * @return
+     * 当前版本名称
      */
     private String getVersionName() {
 
         if (this.curVersion != null) {
             return this.curVersion;
         }
-
-        String versionName = null;
         try {
             this.curVersion = this.context.getPackageManager().getPackageInfo(this.context.getPackageName(), 0).versionName;
             return this.curVersion;
         } catch (PackageManager.NameNotFoundException e) {
             e.printStackTrace();
         }
-        return null;
+        return "";
     }
 
+    /**
+     * 显示更新提示框
+     */
+    private void showUpdateNotice() {
 
-    private void showDialog() {
+
+        String title = "发现新版本：" + updateInfo.getVersionName();
 
         StringBuilder dialogText = new StringBuilder();
-        dialogText.append("最新版本：" + updateInfo.getVersionName());
-        dialogText.append("\n");
-        dialogText.append("当前版本：" + updateInfo.getVersionName());
-        dialogText.append("\n");
         String updateMsg = updateInfo.getUpdateMsg();
         if (updateMsg != null && !"".equals(updateMsg)) {
-            dialogText.append("更新说明：\n");
+            dialogText.append("更新说明：");
             dialogText.append(updateMsg);
         }
 
-        MaterialDialog dialog = new MaterialDialog(this.context);
 
-        dialog.setTitle("版本更新").setMessage(dialogText).setPositiveButton("开始更新", new View.OnClickListener() {
+        new AlertDialog.Builder(context).setTitle(title).setMessage(dialogText).setPositiveButton("开始更新", new DialogInterface.OnClickListener() {
             @Override
-            public void onClick(View v) {
+            public void onClick(DialogInterface dialog, int which) {
+
+                //开始下载
+                downloadApk();
 
             }
-        }).setNegativeButton("下次再说", new View.OnClickListener() {
+        }).setNegativeButton("下次再说", new DialogInterface.OnClickListener() {
             @Override
-            public void onClick(View v) {
+            public void onClick(DialogInterface dialog, int which) {
 
             }
         }).show();
+
     }
 
     /**
@@ -164,32 +158,17 @@ public class UpdateManager {
     private void downloadApk() {
 
         String path = this.context.getExternalCacheDir().getPath() + "/" + updateInfo.getVersionName() + ".apk";
-
-        //String path = Environment.getExternalStorageDirectory() + "/a.apk";
-
         Log.i("UPDATE", path);
 
         downUtil = new DownUtil(updateInfo.getDownloadUrl(), path);
 
-
-        boolean showMinMax = true;
-        downloadDialog = new MaterialDialog(this.context)
-                .setTitle("更新软件")
-                .setMessage("下载中");
-        downloadDialog.show();
-
-//        while (dialog.getCurrentProgress() != dialog.getMaxProgress()) {
-//            // If the progress dialog is cancelled (the user closes it before it's done), break the loop
-//            if (dialog.isCancelled()) break;
-//            // Wait 50 milliseconds to simulate doing work that requires progress
-//            try {
-//                Thread.sleep(50);
-//            } catch (InterruptedException e) {
-//                break;
-//            }
-//            // Increment the dialog's progress by 1 after sleeping for 50ms
-//            dialog.incrementProgress(1);
-//        }
+        progressDialog = new ProgressDialog(context);
+        progressDialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
+        progressDialog.setMax(100);
+        progressDialog.setProgress(0);
+        progressDialog.setCancelable(false);
+        progressDialog.setTitle("更新软件");
+        progressDialog.show();
 
 
         new Thread() {
@@ -212,6 +191,7 @@ public class UpdateManager {
 
                             if (completeRate >= 100) {
                                 timer.cancel();
+                                handler.sendEmptyMessage(Constants.MSG_PROGRESS_CANCEL);
                                 handler.sendEmptyMessage(Constants.MSG_OPEN_APK);
                             }
 
@@ -245,7 +225,7 @@ public class UpdateManager {
                 }
                 case Constants.MSG_NEW_UPDATE: {
                     //有更新
-                    downloadApk();
+                    showUpdateNotice();
                     break;
                 }
                 case Constants.MSG_NO_UPDATE: {
@@ -254,7 +234,7 @@ public class UpdateManager {
                     break;
                 }
                 case Constants.MSG_DOWNLOADING: {
-                    downloadDialog.setMessage("进度：" + msg.arg1 + "%");
+                    progressDialog.setProgress(msg.arg1);
                     break;
                 }
                 case Constants.MSG_OPEN_APK: {
@@ -263,12 +243,45 @@ public class UpdateManager {
                     openFile(file);
                     break;
                 }
+                case Constants.MSG_PROGRESS_CANCEL: {
+                    progressDialog.cancel();
+                    break;
+                }
+
                 default: {
                     break;
                 }
             }
 
         }
+    }
+
+
+    /**
+     * 解析升级的json数据
+     *
+     * @param json
+     * @return
+     */
+    private UpdateInfo parse(String json) {
+
+        UpdateInfo updateInfo = null;
+
+        try {
+            JSONObject object = new JSONObject(json);
+
+            String versionName = object.getString(Constants.STR_VERSION_NAME);
+            String downloadUrl = object.getString(Constants.STR_DOWNLOAD_URL);
+            String updateMsg = object.getString(Constants.STR_UPDATE_MSG);
+            updateInfo = new UpdateInfo();
+            updateInfo.setDownloadUrl(downloadUrl);
+            updateInfo.setVersionName(versionName);
+            updateInfo.setUpdateMsg(updateMsg);
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return updateInfo;
     }
 
 
