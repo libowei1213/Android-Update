@@ -8,7 +8,15 @@ public class UpdateInfo {
     private String versionName;
     private String downloadUrl;
     private String updateMsg;
+    private Integer versionCode;
 
+    public Integer getVersionCode() {
+        return versionCode;
+    }
+
+    public void setVersionCode(Integer versionCode) {
+        this.versionCode = versionCode;
+    }
 
     public String getUpdateMsg() {
         return updateMsg;

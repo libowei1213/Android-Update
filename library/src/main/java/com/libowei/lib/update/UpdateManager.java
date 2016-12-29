@@ -1,4 +1,4 @@
-package com.libowei.lib.update;
+package update;
 
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
@@ -11,6 +11,9 @@ import android.os.Handler;
 import android.os.Message;
 import android.util.Log;
 
+import com.libowei.lib.update.Constants;
+import com.libowei.lib.update.DownUtil;
+import com.libowei.lib.update.UpdateInfo;
 
 import org.apache.commons.io.IOUtils;
 import org.json.JSONException;
@@ -28,11 +31,10 @@ import java.util.TimerTask;
  */
 public class UpdateManager {
 
-
     private Context context;
     private String curVersion = null;
+    private Integer curVersionCode = -1;
     private UpdateHandler handler = null;
-
 
     UpdateInfo updateInfo;
     DownUtil downUtil;
@@ -47,7 +49,6 @@ public class UpdateManager {
         this.context = context;
         this.handler = new UpdateHandler();
     }
-
 
     /**
      * 检查更新
@@ -64,31 +65,38 @@ public class UpdateManager {
                     HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
                     conn.setConnectTimeout(5 * 1000);
                     conn.connect();
-                    //连接成功
+                    // 连接成功
                     if (conn.getResponseCode() == HttpURLConnection.HTTP_OK) {
 
                         String response = IOUtils.toString(conn.getInputStream());
+
+                        Log.i("updateManager", response);
+
                         updateInfo = parse(response);
                         if (updateInfo == null) {
                             handler.sendEmptyMessage(Constants.MSG_PARSE_ERROR);
                             return;
                         }
-                        //判断版本号
+                        // 判断版本号
                         String currentVersionName = getVersionName();
+                        int currentVersionCode = getVersionCode();
 
-                        if (currentVersionName != null) {
-                            if (currentVersionName.equals(updateInfo.getVersionName())) {
-                                //版本号一致->没有更新
-                                handler.sendEmptyMessage(Constants.MSG_NO_UPDATE);
-                            } else {
-                                //版本号不一致->有更新
+                        if (currentVersionName != null && currentVersionCode != -1) {
+                            if (!currentVersionName.equals(updateInfo.getVersionName())
+                                    && currentVersionCode < updateInfo.getVersionCode()) {
+
+                                // 版本号不一致->有更新
                                 if (updateInfo.getDownloadUrl() == null || "".equals(updateInfo.getDownloadUrl())) {
-                                    //没有下载url
+                                    // 没有下载url
                                     handler.sendEmptyMessage(Constants.MSG_PARSE_ERROR);
                                     return;
                                 }
-                                //有更新, 发送Message
+                                // 有更新, 发送Message
                                 handler.sendEmptyMessage(Constants.MSG_NEW_UPDATE);
+
+                            } else {
+                                handler.sendEmptyMessage(Constants.MSG_NO_UPDATE);
+
                             }
                         }
                     }
@@ -100,7 +108,6 @@ public class UpdateManager {
             }
         }.start();
     }
-
 
     /**
      * 当前版本名称
@@ -119,11 +126,24 @@ public class UpdateManager {
         return "";
     }
 
+    private int getVersionCode() {
+
+        if (this.curVersionCode != -1) {
+            return this.curVersionCode;
+        }
+        try {
+            this.curVersionCode = this.context.getPackageManager().getPackageInfo(this.context.getPackageName(), 0).versionCode;
+            return this.curVersionCode;
+        } catch (PackageManager.NameNotFoundException e) {
+            e.printStackTrace();
+        }
+        return -1;
+    }
+
     /**
      * 显示更新提示框
      */
     private void showUpdateNotice() {
-
 
         String title = "发现新版本：" + updateInfo.getVersionName();
 
@@ -134,16 +154,16 @@ public class UpdateManager {
             dialogText.append(updateMsg);
         }
 
+        new AlertDialog.Builder(context).setTitle(title).setMessage(dialogText)
+                .setPositiveButton("开始更新", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
 
-        new AlertDialog.Builder(context).setTitle(title).setMessage(dialogText).setPositiveButton("开始更新", new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
+                        // 开始下载
+                        downloadApk();
 
-                //开始下载
-                downloadApk();
-
-            }
-        }).setNegativeButton("下次再说", new DialogInterface.OnClickListener() {
+                    }
+                }).setNegativeButton("下次再说", new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
 
@@ -170,13 +190,11 @@ public class UpdateManager {
         progressDialog.setTitle("更新软件");
         progressDialog.show();
 
-
         new Thread() {
             @Override
             public void run() {
                 try {
                     downUtil.download();
-
 
                     final Timer timer = new Timer();
                     timer.schedule(new TimerTask() {
@@ -198,7 +216,6 @@ public class UpdateManager {
                         }
                     }, 0, 100);
 
-
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -208,10 +225,8 @@ public class UpdateManager {
 
     }
 
-
     /**
-     * 内部类 UpdateHandler
-     * 用于处理更新中的各种msg
+     * 内部类 UpdateHandler 用于处理更新中的各种msg
      */
     class UpdateHandler extends Handler {
         @Override
@@ -219,17 +234,17 @@ public class UpdateManager {
 
             switch (msg.what) {
                 case Constants.MSG_NETWORK_ERROR: {
-                    //网络问题
+                    // 网络问题
                     Log.e("UPDATE", "网络问题");
                     break;
                 }
                 case Constants.MSG_NEW_UPDATE: {
-                    //有更新
+                    // 有更新
                     showUpdateNotice();
                     break;
                 }
                 case Constants.MSG_NO_UPDATE: {
-                    //没有更新
+                    // 没有更新
                     Log.e("UPDATE", "没有更新啊");
                     break;
                 }
@@ -256,7 +271,6 @@ public class UpdateManager {
         }
     }
 
-
     /**
      * 解析升级的json数据
      *
@@ -273,17 +287,18 @@ public class UpdateManager {
             String versionName = object.getString(Constants.STR_VERSION_NAME);
             String downloadUrl = object.getString(Constants.STR_DOWNLOAD_URL);
             String updateMsg = object.getString(Constants.STR_UPDATE_MSG);
+            Integer versionCode = object.getInt(Constants.STR_VERSION_CODE);
             updateInfo = new UpdateInfo();
             updateInfo.setDownloadUrl(downloadUrl);
             updateInfo.setVersionName(versionName);
             updateInfo.setUpdateMsg(updateMsg);
+            updateInfo.setVersionCode(versionCode);
 
         } catch (JSONException e) {
             e.printStackTrace();
         }
         return updateInfo;
     }
-
 
     private void openFile(File file) {
         Intent intent = new Intent();

@@ -9,6 +9,7 @@ public class Constants {
     public static final String STR_VERSION_NAME = "ver";
     public static final String STR_DOWNLOAD_URL = "url";
     public static final String STR_UPDATE_MSG = "msg";
+    public static final String STR_VERSION_CODE = "verCode";
 
     //msg what
     public static final int MSG_NO_UPDATE = 0x001;
